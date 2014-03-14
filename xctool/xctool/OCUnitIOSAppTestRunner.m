@@ -25,6 +25,9 @@
 #import "XCToolUtil.h"
 #import "XcodeBuildSettings.h"
 
+static const NSInteger KProductTypeIphone = 1;
+static const NSInteger KProductTypeIpad = 2;
+
 static const NSInteger kMaxInstallOrUninstallAttempts = 3;
 
 static void GetJobsIterator(const launch_data_t launch_data, const char *key, void *context) {
@@ -101,10 +104,65 @@ static void KillSimulatorJobs()
   }
 }
 
+@interface DTiPhoneSimulatorSystemRoot (LatestRoot)
++ (DTiPhoneSimulatorSystemRoot *)latestRoot;
+@end
+
+@implementation DTiPhoneSimulatorSystemRoot (LatestRoot)
+
++ (DTiPhoneSimulatorSystemRoot *)latestRoot
+{
+  DTiPhoneSimulatorSystemRoot *latest = [[DTiPhoneSimulatorSystemRoot knownRoots] lastObject];
+
+  for (DTiPhoneSimulatorSystemRoot *root in [DTiPhoneSimulatorSystemRoot knownRoots]) {
+    if ([root.sdkVersion compare:latest.sdkVersion options:NSLiteralSearch | NSNumericSearch | NSCaseInsensitiveSearch] == NSOrderedDescending) {
+      latest = root;
+    }
+  }
+
+  return latest;
+}
+
+@end
+
 @implementation OCUnitIOSAppTestRunner
 
-- (NSNumber *)simulatedDeviceFamily {
-  return [[_simulatorType lowercaseString] isEqualToString:@"ipad"] ? @2 : @1;
+- (NSNumber *)simulatedDeviceFamily
+{
+  if (_simulatorType) {
+    return [[_simulatorType lowercaseString] isEqualToString:@"ipad"] ? @(KProductTypeIpad) : @(KProductTypeIphone);
+  } else {
+    return @([_buildSettings[Xcode_TARGETED_DEVICE_FAMILY] integerValue]);
+  }
+}
+
+- (NSString *)simulatedDeviceInfoName
+{
+  if (_deviceName) {
+    return _deviceName;
+  }
+
+  switch ([[self simulatedDeviceFamily] integerValue]) {
+    case KProductTypeIphone:
+      return @"iPhone";
+
+    case KProductTypeIpad:
+      return @"iPad";
+  }
+
+  return @"iPhone";
+}
+
+- (NSString *)simulatedArchitecture
+{
+  switch (self.cpuType) {
+    case CPU_TYPE_I386:
+      return @"i386";
+
+    case CPU_TYPE_X86_64:
+      return @"x86_64";
+  }
+  return @"i386";
 }
 
 - (DTiPhoneSimulatorSessionConfig *)sessionConfigForRunningTestsWithEnvironment:(NSDictionary *)environment
@@ -115,12 +173,21 @@ static void KillSimulatorJobs()
   NSString *testHostAppPath = [testHostPath stringByDeletingLastPathComponent];
 
   NSString *sdkVersion = [_buildSettings[Xcode_SDK_NAME] stringByReplacingOccurrencesOfString:@"iphonesimulator" withString:@""];
+  if (self.OSVersion) {
+    if ([self.OSVersion isEqualTo:@"latest"]) {
+      sdkVersion = [[DTiPhoneSimulatorSystemRoot latestRoot] sdkVersion];
+    } else {
+      sdkVersion = self.OSVersion;
+    }
+  }
   NSString *ideBundleInjectionLibPath = @"/../../Library/PrivateFrameworks/IDEBundleInjection.framework/IDEBundleInjection";
   NSString *testBundlePath = [NSString stringWithFormat:@"%@/%@",
                               _buildSettings[Xcode_BUILT_PRODUCTS_DIR],
                               _buildSettings[Xcode_FULL_PRODUCT_NAME]];
 
   DTiPhoneSimulatorSystemRoot *systemRoot = [DTiPhoneSimulatorSystemRoot rootWithSDKVersion:sdkVersion];
+  NSAssert(systemRoot != nil, @"Unable to instantiate DTiPhoneSimulatorSystemRoot");
+
   DTiPhoneSimulatorApplicationSpecifier *appSpec =
   [DTiPhoneSimulatorApplicationSpecifier specifierWithApplicationPath:testHostAppPath];
 
@@ -129,12 +196,14 @@ static void KillSimulatorJobs()
   [sessionConfig setSimulatedSystemRoot:systemRoot];
   [sessionConfig setSimulatedDeviceFamily:[self simulatedDeviceFamily]];
   [sessionConfig setSimulatedApplicationShouldWaitForDebugger:NO];
-
   [sessionConfig setSimulatedApplicationLaunchArgs:[self testArguments]];
+  [sessionConfig setSimulatedDeviceInfoName:[self simulatedDeviceInfoName]];
+  [sessionConfig setSimulatedArchitecture:[self simulatedArchitecture]];
 
   NSMutableDictionary *launchEnvironment = [NSMutableDictionary dictionary];
   [launchEnvironment addEntriesFromDictionary:environment];
   [launchEnvironment addEntriesFromDictionary:@{
+   @"DYLD_FALLBACK_FRAMEWORK_PATH" : [systemRoot.sdkRootPath stringByAppendingPathComponent:@"/Developer/Library/Frameworks"],
    @"DYLD_FRAMEWORK_PATH" : _buildSettings[Xcode_TARGET_BUILD_DIR],
    @"DYLD_LIBRARY_PATH" : _buildSettings[Xcode_TARGET_BUILD_DIR],
    @"DYLD_INSERT_LIBRARIES" : [@[
@@ -167,9 +236,18 @@ static void KillSimulatorJobs()
 
 - (BOOL)runMobileInstallationHelperWithArguments:(NSArray *)arguments
 {
-  NSString *sdkVersion = [_buildSettings[Xcode_SDK_NAME] stringByReplacingOccurrencesOfString:@"iphonesimulator"
-                                                                                withString:@""];
+  NSString *sdkVersion = [_buildSettings[Xcode_SDK_NAME] stringByReplacingOccurrencesOfString:@"iphonesimulator" withString:@""];
+  if (self.OSVersion) {
+    if ([self.OSVersion isEqualTo:@"latest"]) {
+      sdkVersion = [[DTiPhoneSimulatorSystemRoot latestRoot] sdkVersion];
+    } else {
+      sdkVersion = self.OSVersion;
+    }
+  }
+
   DTiPhoneSimulatorSystemRoot *systemRoot = [DTiPhoneSimulatorSystemRoot rootWithSDKVersion:sdkVersion];
+  NSAssert(systemRoot != nil, @"Unable to instantiate DTiPhoneSimulatorSystemRoot");
+
   DTiPhoneSimulatorApplicationSpecifier *appSpec = [DTiPhoneSimulatorApplicationSpecifier specifierWithApplicationPath:
                                                     [XCToolLibExecPath() stringByAppendingPathComponent:@"mobile-installation-helper.app"]];
   DTiPhoneSimulatorSessionConfig *sessionConfig = [[[DTiPhoneSimulatorSessionConfig alloc] init] autorelease];
@@ -180,6 +258,7 @@ static void KillSimulatorJobs()
   [sessionConfig setLocalizedClientName:@"xctool"];
   [sessionConfig setSimulatedApplicationLaunchArgs:arguments];
   [sessionConfig setSimulatedApplicationLaunchEnvironment:@{}];
+  [sessionConfig setSimulatedDeviceInfoName:[self simulatedDeviceInfoName]];
 
   SimulatorLauncher *launcher = [[[SimulatorLauncher alloc] initWithSessionConfig:sessionConfig
                                                                        deviceName:_deviceName] autorelease];
@@ -188,7 +267,7 @@ static void KillSimulatorJobs()
 }
 
 /**
- * Use the iPhoneSimulatorRemoteClient framework to start the app in the sim,
+ * Use the DTiPhoneSimulatorRemoteClient framework to start the app in the sim,
  * inject otest-shim into the app as it starts, and feed line-by-line output to
  * the `feedOutputToBlock`.
  *
@@ -318,6 +397,10 @@ static void KillSimulatorJobs()
 
   NSString *testHostBundleID = testHostInfoPlist[@"CFBundleIdentifier"];
   NSAssert(testHostBundleID != nil, @"Missing 'CFBundleIdentifier' in Info.plist");
+
+  // Triggers some global state to be initialized - we must do this before
+  // interacting with DTiPhoneSimulatorRemoteClient.
+  [SimulatorLauncher loadAllPlatforms];
 
   BOOL (^prepTestEnv)() = ^BOOL() {
     if (_freshSimulator) {

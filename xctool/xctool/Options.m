@@ -97,6 +97,11 @@
                                   "pairs describing the destination to use)"
                        paramName:@"DESTINATION"
                            mapTo:@selector(setDestination:)],
+    [Action actionOptionWithName:@"destination-timeout"
+                         aliases:nil
+                     description:@"wait for TIMEOUT seconds while searching for the destination device"
+                       paramName:@"DESTINATION-TIMEOUT"
+                           mapTo:@selector(setDestinationTimeout:)],
     [Action actionOptionWithName:@"jobs"
                          aliases:nil
                      description:@"number of concurrent build operations to run"
@@ -536,6 +541,13 @@
 
   if (self.destination != nil) {
     [arguments addObjectsFromArray:@[@"-destination", self.destination]];
+    if (self.destinationTimeout == nil) {
+      self.destinationTimeout = @"10";
+    }
+  }
+
+  if (self.destinationTimeout != nil) {
+    [arguments addObjectsFromArray:@[@"-destination-timeout", self.destinationTimeout]];
   }
 
   if (self.toolchain != nil) {

@@ -344,6 +344,13 @@ NSArray *BucketizeTestCasesByTestClass(NSArray *testCases, int bucketSize)
       return NO;
     }
 
+    if (destInfo[@"arch"] != nil) {
+      if ([destInfo[@"arch"] isEqual:@"i386"]) {
+        _cpuType = CPU_TYPE_I386;
+      } else {
+        _cpuType = CPU_TYPE_X86_64;
+      }
+    }
     if (destInfo[@"name"] != nil) {
       NSString *deviceName = destInfo[@"name"];
       cpu_type_t cpuType = CPU_TYPE_ANY;
@@ -352,6 +359,9 @@ NSArray *BucketizeTestCasesByTestClass(NSArray *testCases, int bucketSize)
       }
       _cpuType = cpuType;
       [self setDeviceName:deviceName];
+    }
+    if (destInfo[@"OS"] != nil) {
+      [self setOSVersion:destInfo[@"OS"]];
     }
   }
 
@@ -520,8 +530,13 @@ typedef BOOL (^TestableBlock)(NSArray *reporters);
                                      reporters:reporters] autorelease];
     [testRunner setCpuType:_cpuType];
 
-    if(_deviceName != nil && [testRunner isKindOfClass:[OCUnitIOSAppTestRunner class]]) {
-      [(OCUnitIOSAppTestRunner *)testRunner setDeviceName:_deviceName];
+    if ([testRunner isKindOfClass:[OCUnitIOSAppTestRunner class]]) {
+      if (_deviceName) {
+        [(OCUnitIOSAppTestRunner *)testRunner setDeviceName:_deviceName];
+      }
+      if (_OSVersion) {
+        [(OCUnitIOSAppTestRunner *)testRunner setOSVersion:_OSVersion];
+      }
     }
 
     PublishEventToReporters(reporters,
